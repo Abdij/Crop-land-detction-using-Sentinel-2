@@ -119,25 +119,22 @@ function getDateRangeFromSlider(slider) {
   };
 }
 
+function formatJsDate(date) {
+  if (typeof date === 'string') return date;
+  var d = new Date(date);
+  return d.toISOString().split('T')[0];
+}
+
 function formatDateForDisplay(d) {
   return ee.Date(d).format('YYYY-MM-dd');
 }
 
 function updateDateLabel(labelWidget, prefix, rangeObj) {
-  var start = formatDateForDisplay(rangeObj.start);
-  var end = formatDateForDisplay(rangeObj.end);
-
-  start.evaluate(function(s) {
-    end.evaluate(function(e) {
-      labelWidget.setValue(prefix + ': ' + s + ' to ' + e);
-    });
-  });
-}
-
-function updateDateLabel(labelWidget, prefix, rangeObj) {
-  labelWidget.setValue(
-    prefix + ': ' + formatJsDate(rangeObj.start) + ' to ' + formatJsDate(rangeObj.end)
-  );
+  var startDate = new Date(rangeObj.start);
+  var endDate = new Date(rangeObj.end);
+  var startStr = startDate.toISOString().split('T')[0];
+  var endStr = endDate.toISOString().split('T')[0];
+  labelWidget.setValue(prefix + ': ' + startStr + ' to ' + endStr);
 }
 
 function maskS2(image) {
@@ -608,16 +605,16 @@ function runAnalysis() {
   );
 
   var guCollection = getCollection(
-  filterArea,
-  formatJsDate(guRange.start),
-  formatJsDate(guRange.end)
-);
+    filterArea,
+    formatJsDate(guRange.start),
+    formatJsDate(guRange.end)
+  );
 
-var deyrCollection = getCollection(
-  filterArea,
-  formatJsDate(deyrRange.start),
-  formatJsDate(deyrRange.end)
-);
+  var deyrCollection = getCollection(
+    filterArea,
+    formatJsDate(deyrRange.start),
+    formatJsDate(deyrRange.end)
+  );
 
   var guComposite = getMedianComposite(guCollection, filterArea);
   var deyrComposite = getMedianComposite(deyrCollection, filterArea);
