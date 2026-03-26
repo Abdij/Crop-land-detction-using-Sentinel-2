@@ -1,6 +1,4 @@
 # Crop-land-detction-using-Sentinel-2
-# Farmland Detection in Somalia using Sentinel-2
-
 A Google Earth Engine (GEE) script for detecting and visualizing agricultural land in Somalia using Sentinel-2 satellite imagery and vegetation indices.
 
 ## Overview
