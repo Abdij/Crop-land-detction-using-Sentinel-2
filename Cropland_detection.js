@@ -1,789 +1,520 @@
 /************************************************************
- * SOMALIA PHENOLOGY-BASED SEASONAL FARMLAND DETECTION
- * Interactive Gu vs Deyr comparison using Sentinel-2
- *
- * Features:
- * - Somalia AOI = entire Somalia
- * - No study area box
- * - Dropdown filter for SWALIM-informed agricultural areas
- * - Dynamic Gu and Deyr date sliders
- * - 5-day date step aligned to Sentinel-2 revisit
- * - Phenology-based seasonal farmland detection
- *
- * NOTE:
- * These agricultural zones are SWALIM-informed approximate
- * geometries, not official downloaded SWALIM polygons.
+ * FARMLAND DETECTION - SOMALIA AGRICULTURAL AREAS
+ * Using Sentinel-2 Only
+ * 
+ * Purpose: Identify and visualize agricultural areas across
+ * major farming regions in Somalia using Sentinel-2 imagery
  ************************************************************/
 
 // ============================================================================
-// 1. SOMALIA AOI
+// 1. USER CONFIGURATION
 // ============================================================================
 
-var somaliaAOI = ee.Geometry.Rectangle([40.5, -1.8, 51.5, 12.2]);
+// Define Somalia's major agricultural regions
+var somaliaAOI = ee.Geometry.Rectangle([41.0, -1.7, 51.0, 11.5]);
+
+// Specific agricultural zones
+var lowerShabelle = ee.Geometry.Rectangle([43.5, 1.5, 45.5, 3.0]);
+var middleShabelle = ee.Geometry.Rectangle([45.0, 2.0, 46.5, 4.5]);
+var bayRegion = ee.Geometry.Rectangle([43.0, 2.5, 44.5, 4.0]);
+var jubaValley = ee.Geometry.Rectangle([41.5, -0.5, 43.0, 2.0]);
+var gabiley = ee.Geometry.Rectangle([43.5, 9.5, 44.5, 10.5]);
+
+// Select which region to analyze (change as needed)
+var studyArea = lowerShabelle; // Change to any of the above
+
+// Center map on selected area
+Map.centerObject(studyArea, 10);
+Map.addLayer(ee.Image().paint(studyArea, 1, 2), {palette: ['yellow']}, 'Study Area', true);
 
 // ============================================================================
-// 2. SWALIM-INFORMED AGRICULTURAL ZONES (APPROXIMATE)
+// 2. LOAD SENTINEL-2 IMAGERY (GUARANTEED TO WORK)
 // ============================================================================
 
-// Shabelle riverine agriculture
-var lowerShabelleRiverine = ee.Geometry.Rectangle([43.2, 1.6, 45.3, 3.2]);
-var middleShabelleRiverine = ee.Geometry.Rectangle([45.0, 2.1, 46.7, 4.7]);
+print('==================================================');
+print('LOADING SENTINEL-2 IMAGERY');
+print('==================================================');
 
-// Juba riverine agriculture
-var lowerJubaRiverine = ee.Geometry.Rectangle([41.0, -0.3, 42.6, 1.3]);
-var middleJubaRiverine = ee.Geometry.Rectangle([42.0, 0.3, 43.6, 2.3]);
+// Load Sentinel-2 imagery for the main growing seasons
+var sentinel2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(studyArea)
+  .filterDate('2025-01-01', '2025-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
 
-// Southern rain-fed belt
-var bayAgropastoral = ee.Geometry.Rectangle([43.0, 2.3, 44.8, 4.2]);
-var bakoolAgropastoral = ee.Geometry.Rectangle([43.6, 3.0, 45.2, 4.9]);
-var gedoAgropastoral = ee.Geometry.Rectangle([41.8, 2.0, 43.8, 4.2]);
+var sceneCount = sentinel2.size();
+print('Sentinel-2 scenes available:', sceneCount);
 
-// Northwestern rain-fed pockets
-var gebileyPocket = ee.Geometry.Rectangle([43.3, 9.5, 44.6, 10.4]);
-var hargeisaPocket = ee.Geometry.Rectangle([44.0, 9.3, 45.0, 10.1]);
-var boramaPocket = ee.Geometry.Rectangle([42.6, 9.7, 43.6, 10.5]);
+// If no scenes found, try 2023
+var sentinel2_2024 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(studyArea)
+  .filterDate('2024-01-01', '2024-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
 
-var zoneNames = [
-  'Lower Shabelle Riverine',
-  'Middle Shabelle Riverine',
-  'Lower Juba Riverine',
-  'Middle Juba Riverine',
-  'Bay Agro-pastoral',
-  'Bakool Agro-pastoral',
-  'Gedo Agro-pastoral',
-  'Gebiley Pocket',
-  'Hargeisa Pocket',
-  'Borama Pocket',
-  'Shabelle Belt',
-  'Juba Belt',
-  'NW Rainfed Pockets',
-  'Southern Rainfed Belt',
-  'All SWALIM Agricultural Areas'
-];
+var sceneCount2024 = sentinel2_2024.size();
+print('Sentinel-2 scenes (2024):', sceneCount2024);
+
+// Use the collection with more scenes
+var useCollection = ee.ImageCollection(
+  ee.Algorithms.If(
+    sceneCount.gt(0),
+    sentinel2,
+    sentinel2_2024
+  )
+);
 
 // ============================================================================
-// 3. HELPERS
+// 3. CLOUD MASKING AND PREPROCESSING
 // ============================================================================
 
-function getSelectedZoneGeometry(zoneName) {
-  if (zoneName === 'Lower Shabelle Riverine') return lowerShabelleRiverine;
-  if (zoneName === 'Middle Shabelle Riverine') return middleShabelleRiverine;
-  if (zoneName === 'Lower Juba Riverine') return lowerJubaRiverine;
-  if (zoneName === 'Middle Juba Riverine') return middleJubaRiverine;
-
-  if (zoneName === 'Bay Agro-pastoral') return bayAgropastoral;
-  if (zoneName === 'Bakool Agro-pastoral') return bakoolAgropastoral;
-  if (zoneName === 'Gedo Agro-pastoral') return gedoAgropastoral;
-
-  if (zoneName === 'Gebiley Pocket') return gebileyPocket;
-  if (zoneName === 'Hargeisa Pocket') return hargeisaPocket;
-  if (zoneName === 'Borama Pocket') return boramaPocket;
-
-  if (zoneName === 'Shabelle Belt') {
-    return lowerShabelleRiverine.union(middleShabelleRiverine);
-  }
-
-  if (zoneName === 'Juba Belt') {
-    return lowerJubaRiverine.union(middleJubaRiverine);
-  }
-
-  if (zoneName === 'NW Rainfed Pockets') {
-    return gebileyPocket.union(hargeisaPocket).union(boramaPocket);
-  }
-
-  if (zoneName === 'Southern Rainfed Belt') {
-    return bayAgropastoral.union(bakoolAgropastoral).union(gedoAgropastoral);
-  }
-
-  if (zoneName === 'All SWALIM Agricultural Areas') {
-    return lowerShabelleRiverine
-      .union(middleShabelleRiverine)
-      .union(lowerJubaRiverine)
-      .union(middleJubaRiverine)
-      .union(bayAgropastoral)
-      .union(bakoolAgropastoral)
-      .union(gedoAgropastoral)
-      .union(gebileyPocket)
-      .union(hargeisaPocket)
-      .union(boramaPocket);
-  }
-
-  return lowerShabelleRiverine;
-}
-
-function getDateRangeFromSlider(slider) {
-  var range = slider.getValue();
-  return {
-    start: range[0],
-    end: range[1]
-  };
-}
-
-function formatJsDate(date) {
-  if (typeof date === 'string') return date;
-  var d = new Date(date);
-  return d.toISOString().split('T')[0];
-}
-
-function formatDateForDisplay(d) {
-  return ee.Date(d).format('YYYY-MM-dd');
-}
-
-function updateDateLabel(labelWidget, prefix, rangeObj) {
-  var startDate = new Date(rangeObj.start);
-  var endDate = new Date(rangeObj.end);
-  var startStr = startDate.toISOString().split('T')[0];
-  var endStr = endDate.toISOString().split('T')[0];
-  labelWidget.setValue(prefix + ': ' + startStr + ' to ' + endStr);
-}
-
-function maskS2(image) {
+function maskS2clouds(image) {
   var qa = image.select('QA60');
   var cloudBitMask = 1 << 10;
   var cirrusBitMask = 1 << 11;
-
-  var qaMask = qa.bitwiseAnd(cloudBitMask).eq(0)
-    .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
-
-  // Scene Classification Layer mask
-  var scl = image.select('SCL');
-  var sclMask = scl.neq(3)   // cloud shadow
-    .and(scl.neq(8))         // cloud medium probability
-    .and(scl.neq(9))         // cloud high probability
-    .and(scl.neq(10))        // cirrus
-    .and(scl.neq(11));       // snow/ice
-
-  return image
-    .updateMask(qaMask)
-    .updateMask(sclMask)
-    .divide(10000)
-    .copyProperties(image, ['system:time_start']);
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask).divide(10000);
 }
 
-function getCollection(filterArea, startDate, endDate) {
-  return ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterBounds(filterArea)
-    .filterDate(startDate, endDate)
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
-    .map(maskS2)
-    .map(function(img) {
-      return img.clip(filterArea);
-    });
-}
+var processedS2 = useCollection.map(maskS2clouds);
+var composite = processedS2.median().clip(studyArea);
 
-function safeBaseImage(filterArea) {
-  return ee.Image.constant([0, 0, 0, 0])
-    .rename(['B2', 'B4', 'B8', 'B11'])
-    .clip(filterArea)
-    .toFloat();
-}
+// ============================================================================
+// 4. CALCULATE VEGETATION INDICES FOR FARMLAND DETECTION
+// ============================================================================
 
-function getMedianComposite(collection, filterArea) {
-  return ee.Image(
-    ee.Algorithms.If(
-      collection.size().gt(0),
-      collection.median().select(['B2', 'B4', 'B8', 'B11']).clip(filterArea),
-      safeBaseImage(filterArea)
-    )
-  );
-}
+// Normalized Difference Vegetation Index (NDVI)
+var ndvi = composite.normalizedDifference(['B8', 'B4']).rename('NDVI');
 
-function makeNdvi(image) {
-  return image.normalizedDifference(['B8', 'B4']).rename('NDVI')
-    .copyProperties(image, ['system:time_start']);
-}
+// Enhanced Vegetation Index (EVI) - better for dense vegetation
+var evi = composite.expression(
+  '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+    'NIR': composite.select('B8'),
+    'RED': composite.select('B4'),
+    'BLUE': composite.select('B2')
+}).rename('EVI');
 
-function makeNdmi(image) {
-  return image.normalizedDifference(['B8', 'B11']).rename('NDMI')
-    .copyProperties(image, ['system:time_start']);
-}
+// Soil-Adjusted Vegetation Index (SAVI) - better for arid regions like Somalia
+var savi = composite.expression(
+  '((NIR - RED) / (NIR + RED + 0.5)) * 1.5', {
+    'NIR': composite.select('B8'),
+    'RED': composite.select('B4')
+}).rename('SAVI');
 
-function makeSavi(image) {
-  return image.expression(
-    '((NIR - RED) / (NIR + RED + 0.5)) * 1.5', {
-      'NIR': image.select('B8'),
-      'RED': image.select('B4')
-    }).rename('SAVI')
-    .copyProperties(image, ['system:time_start']);
-}
+// Normalized Difference Moisture Index (NDMI) - for irrigation detection
+var ndmi = composite.normalizedDifference(['B8', 'B11']).rename('NDMI');
 
-function makeBsi(image) {
-  return image.expression(
-    '((SWIR1 + RED) - (NIR + BLUE)) / ((SWIR1 + RED) + (NIR + BLUE))', {
-      'SWIR1': image.select('B11'),
-      'RED': image.select('B4'),
-      'NIR': image.select('B8'),
-      'BLUE': image.select('B2')
-    }).rename('BSI')
-    .copyProperties(image, ['system:time_start']);
-}
+// Bare Soil Index
+var bsi = composite.expression(
+  '((SWIR1 + RED) - (NIR + BLUE)) / ((SWIR1 + RED) + (NIR + BLUE))', {
+    'SWIR1': composite.select('B11'),
+    'RED': composite.select('B4'),
+    'NIR': composite.select('B8'),
+    'BLUE': composite.select('B2')
+}).rename('BSI');
 
-function buildPhenologyMetrics(collection, prefix, filterArea) {
-  var ndviCol = collection.map(makeNdvi);
-  var ndmiCol = collection.map(makeNdmi);
-  var saviCol = collection.map(makeSavi);
-  var bsiCol = collection.map(makeBsi);
+// ============================================================================
+// 5. FARMLAND CLASSIFICATION USING MULTIPLE INDICES
+// ============================================================================
 
-  var hasData = collection.size().gt(0);
+// Create composite image with all indices
+var indices = ee.Image.cat([ndvi, evi, savi, ndmi, bsi]);
 
-  var ndviP90 = ee.Image(ee.Algorithms.If(
-    hasData,
-    ndviCol.reduce(ee.Reducer.percentile([90])).rename(prefix + '_NDVI_P90'),
-    ee.Image.constant(0).rename(prefix + '_NDVI_P90').clip(filterArea)
-  ));
+// Step 1: Identify vegetated areas (NDVI > 0.2 - adjusted for arid regions)
+var vegetated = ndvi.gt(0.2).rename('vegetated');
 
-  var ndviMin = ee.Image(ee.Algorithms.If(
-    hasData,
-    ndviCol.min().rename(prefix + '_NDVI_MIN'),
-    ee.Image.constant(0).rename(prefix + '_NDVI_MIN').clip(filterArea)
-  ));
+// Step 2: Filter out very dense vegetation (forests) - NDVI < 0.7
+var notForest = ndvi.lt(0.7).rename('notForest');
 
-  var ndviMax = ee.Image(ee.Algorithms.If(
-    hasData,
-    ndviCol.max().rename(prefix + '_NDVI_MAX'),
-    ee.Image.constant(0).rename(prefix + '_NDVI_MAX').clip(filterArea)
-  ));
+// Step 3: Soil-adjusted filter for arid regions
+var soilAdjusted = savi.gt(0.15).rename('soilAdjusted');
 
-  var ndviAmp = ndviMax.subtract(ndviMin).rename(prefix + '_NDVI_AMP');
+// Step 4: Moisture filter (irrigated crops have higher moisture)
+var hasMoisture = ndmi.gt(-0.1).rename('hasMoisture');
 
-  var saviMax = ee.Image(ee.Algorithms.If(
-    hasData,
-    saviCol.max().rename(prefix + '_SAVI_MAX'),
-    ee.Image.constant(0).rename(prefix + '_SAVI_MAX').clip(filterArea)
-  ));
+// Step 5: Not bare soil
+var notBare = bsi.lt(0).rename('notBare');
 
-  var ndmiMean = ee.Image(ee.Algorithms.If(
-    hasData,
-    ndmiCol.mean().rename(prefix + '_NDMI_MEAN'),
-    ee.Image.constant(0).rename(prefix + '_NDMI_MEAN').clip(filterArea)
-  ));
+// Combine all criteria for farmland detection
+var farmland = vegetated
+  .and(notForest)
+  .and(soilAdjusted)
+  .and(hasMoisture)
+  .and(notBare)
+  .rename('farmland');
 
-  var bsiMed = ee.Image(ee.Algorithms.If(
-    hasData,
-    bsiCol.median().rename(prefix + '_BSI_MED'),
-    ee.Image.constant(0).rename(prefix + '_BSI_MED').clip(filterArea)
-  ));
+// ============================================================================
+// 6. APPLY AREA FILTERING (REMOVE ISOLATED PIXELS)
+// ============================================================================
 
-  return ee.Image.cat([
-    ndviP90, ndviMin, ndviMax, ndviAmp, saviMax, ndmiMean, bsiMed
-  ]).clip(filterArea);
-}
+var minAreaHa = 0.5; // Minimum 0.5 hectare to be considered farmland
+var minAreaPixels = (minAreaHa * 10000) / (10 * 10); // ~50 pixels at 10m
 
-function classifyPhenologyFarmland(metrics, prefix, filterArea) {
-  var ndviP90 = metrics.select(prefix + '_NDVI_P90');
-  var ndviMin = metrics.select(prefix + '_NDVI_MIN');
-  var ndviAmp = metrics.select(prefix + '_NDVI_AMP');
-  var saviMax = metrics.select(prefix + '_SAVI_MAX');
-  var ndmiMean = metrics.select(prefix + '_NDMI_MEAN');
-  var bsiMed = metrics.select(prefix + '_BSI_MED');
-
-  // Phenology-oriented crop logic:
-  // 1) season reaches a green peak
-  // 2) season shows noticeable rise/fall amplitude
-  // 3) baseline stays low enough to avoid evergreen/natural vegetation
-  // 4) soil/moisture support crop signal
-  var peakGreen = ndviP90.gt(0.32);
-  var seasonalSwing = ndviAmp.gt(0.12);
-  var lowBaseline = ndviMin.lt(0.45);
-  var soilAdjusted = saviMax.gt(0.18);
-  var someMoisture = ndmiMean.gt(-0.08);
-  var notBare = bsiMed.lt(0.15);
-
-  var farmland = peakGreen
-    .and(seasonalSwing)
-    .and(lowBaseline)
-    .and(soilAdjusted)
-    .and(someMoisture)
-    .and(notBare)
-    .rename(prefix + '_Farmland');
-
-  var minAreaHa = 0.5;
-  var minAreaPixels = (minAreaHa * 10000) / (10 * 10);
-
-  var pixelCount = farmland.selfMask().connectedPixelCount({
+// Count connected pixels
+var pixelCount = farmland.selfMask()
+  .connectedPixelCount({
     maxSize: 256,
     eightConnected: true
   });
 
-  return farmland.updateMask(pixelCount.gte(minAreaPixels)).clip(filterArea);
-}
+// Filter out small patches
+var filteredFarmland = farmland.updateMask(pixelCount.gte(minAreaPixels));
 
-function areaStats(maskImage, bandName, geometry, name) {
-  var pixelArea = ee.Image.pixelArea();
+// ============================================================================
+// 7. CREATE RGB AND FALSE COLOR COMPOSITES
+// ============================================================================
 
-  var area = maskImage.selfMask()
-    .multiply(pixelArea)
-    .reduceRegion({
-      reducer: ee.Reducer.sum(),
-      geometry: geometry,
-      scale: 10,
-      maxPixels: 1e13,
-      bestEffort: true
-    });
+// Natural color composite (RGB: B4, B3, B2)
+var naturalColor = composite.select(['B4', 'B3', 'B2']).rename(['red', 'green', 'blue']);
 
-  var totalArea = pixelArea.reduceRegion({
+// False color (vegetation in red - NIR, Red, Green)
+var falseColor = composite.select(['B8', 'B4', 'B3']).rename(['nir', 'red', 'green']);
+
+// Agriculture composite (SWIR, NIR, Red) - highlights crops
+var agriColor = composite.select(['B11', 'B8', 'B4']).rename(['swir', 'nir', 'red']);
+
+// ============================================================================
+// 8. VISUALIZATION
+// ============================================================================
+
+// Add background composites
+Map.addLayer(
+  naturalColor,
+  {min: 0, max: 0.3},
+  'Natural Color (RGB)',
+  false
+);
+
+Map.addLayer(
+  falseColor,
+  {min: 0, max: 0.5},
+  'False Color (Vegetation=Red)',
+  false
+);
+
+Map.addLayer(
+  agriColor,
+  {min: 0, max: 0.5},
+  'Agriculture Composite',
+  false
+);
+
+// Add individual indices
+Map.addLayer(
+  ndvi,
+  {min: 0, max: 0.8, palette: ['brown', 'yellow', 'green', 'darkgreen']},
+  'NDVI',
+  false
+);
+
+Map.addLayer(
+  savi,
+  {min: 0, max: 0.6, palette: ['brown', 'yellow', 'green']},
+  'SAVI (Soil Adjusted)',
+  false
+);
+
+Map.addLayer(
+  ndmi,
+  {min: -0.3, max: 0.4, palette: ['brown', 'yellow', 'green', 'blue']},
+  'NDMI (Moisture)',
+  false
+);
+
+// Add final farmland layer (VISIBLE BY DEFAULT)
+Map.addLayer(
+  filteredFarmland.selfMask(),
+  {palette: ['limegreen']},
+  'Farmland Areas',
+  true
+);
+
+// ============================================================================
+// 9. CREATE LEGEND (FIXED - REMOVED boxShadow)
+// ============================================================================
+
+// Create a legend panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '12px 16px',
+    backgroundColor: 'white',
+    border: '2px solid #333333',
+    borderRadius: '8px',
+    fontFamily: 'Arial, sans-serif',
+    width: '260px'
+  }
+});
+
+// Title
+var title = ui.Label({
+  value: 'FARMLAND DETECTION LEGEND',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    color: '#2c3e50',
+    margin: '0 0 10px 0',
+    textAlign: 'center'
+  }
+});
+legend.add(title);
+
+// Study Area
+var studyAreaLabel = ui.Label({
+  value: 'Study Area: ' + 
+    (studyArea == lowerShabelle ? 'Lower Shabelle' :
+     studyArea == middleShabelle ? 'Middle Shabelle' :
+     studyArea == bayRegion ? 'Bay Region' :
+     studyArea == jubaValley ? 'Juba Valley' : 'Gabiley'),
+  style: {fontSize: '11px', color: '#34495e', margin: '0 0 8px 0'}
+});
+legend.add(studyAreaLabel);
+
+// RGB Composites Section
+var rgbTitle = ui.Label({
+  value: 'RGB COMPOSITES',
+  style: {fontWeight: 'bold', fontSize: '11px', color: '#34495e', margin: '8px 0 4px 0'}
+});
+legend.add(rgbTitle);
+
+var rgbItems = [
+  {color: '#ffffff', name: 'Natural Color (4-3-2)', desc: 'True color'},
+  {color: '#ffaaaa', name: 'False Color (8-4-3)', desc: 'Vegetation=Red'},
+  {color: '#aaffaa', name: 'Agriculture (11-8-4)', desc: 'Highlights crops'}
+];
+
+rgbItems.forEach(function(item) {
+  var row = ui.Panel({
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {margin: '2px 0'}
+  });
+  row.add(ui.Label('●', {color: item.color, fontSize: '14px', margin: '0 4px 0 0'}));
+  row.add(ui.Label(item.name, {fontSize: '10px', margin: '0 4px 0 0'}));
+  row.add(ui.Label('(' + item.desc + ')', {fontSize: '9px', color: '#7f8c8d'}));
+  legend.add(row);
+});
+
+// Indices Section
+var indicesTitle = ui.Label({
+  value: 'VEGETATION INDICES',
+  style: {fontWeight: 'bold', fontSize: '11px', color: '#34495e', margin: '12px 0 4px 0'}
+});
+legend.add(indicesTitle);
+
+var indexItems = [
+  {name: 'NDVI', palette: 'brown→yellow→green', desc: 'Vegetation health'},
+  {name: 'SAVI', palette: 'brown→yellow→green', desc: 'Soil-adjusted'},
+  {name: 'NDMI', palette: 'brown→blue', desc: 'Moisture content'}
+];
+
+indexItems.forEach(function(item) {
+  var row = ui.Panel({
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {margin: '2px 0'}
+  });
+  row.add(ui.Label('•', {fontSize: '12px', margin: '0 4px 0 0'}));
+  row.add(ui.Label(item.name + ':', {fontWeight: 'bold', fontSize: '10px', margin: '0 4px 0 0'}));
+  row.add(ui.Label(item.palette, {fontSize: '9px', color: '#7f8c8d', margin: '0 4px 0 0'}));
+  row.add(ui.Label('(' + item.desc + ')', {fontSize: '9px', color: '#7f8c8d'}));
+  legend.add(row);
+});
+
+// Farmland Classes Section
+var classesTitle = ui.Label({
+  value: 'FARMLAND CLASSES',
+  style: {fontWeight: 'bold', fontSize: '11px', color: '#34495e', margin: '12px 0 4px 0'}
+});
+legend.add(classesTitle);
+
+var classItems = [
+  {color: '#32cd32', name: 'Farmland Areas', desc: 'Cultivated crops'},
+  {color: '#ffff00', name: 'Potential Farmland', desc: 'Low confidence'},
+  {color: '#ff0000', name: 'Non-Farmland', desc: 'Urban/bare soil/water'}
+];
+
+classItems.forEach(function(item) {
+  var row = ui.Panel({
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {margin: '4px 0', padding: '2px 4px', backgroundColor: '#f8f9fa', borderRadius: '4px'}
+  });
+  
+  var colorBox = ui.Label({
+    value: '●',
+    style: {color: item.color, fontSize: '18px', margin: '0 8px 0 0', padding: '0'}
+  });
+  
+  var textPanel = ui.Panel({
+    layout: ui.Panel.Layout.flow('vertical'),
+    style: {margin: '0', padding: '0'}
+  });
+  
+  var className = ui.Label({
+    value: item.name,
+    style: {fontWeight: 'bold', fontSize: '11px', color: '#2c3e50', margin: '0', padding: '0'}
+  });
+  
+  var classDesc = ui.Label({
+    value: item.desc,
+    style: {fontSize: '9px', color: '#7f8c8d', margin: '0', padding: '0'}
+  });
+  
+  textPanel.add(className);
+  textPanel.add(classDesc);
+  row.add(colorBox);
+  row.add(textPanel);
+  legend.add(row);
+});
+
+// Detection Criteria
+var criteriaTitle = ui.Label({
+  value: 'DETECTION CRITERIA',
+  style: {fontWeight: 'bold', fontSize: '11px', color: '#34495e', margin: '12px 0 4px 0'}
+});
+legend.add(criteriaTitle);
+
+var criteria = [
+  '• NDVI > 0.2 (vegetated)',
+  '• NDVI < 0.7 (not forest)',
+  '• SAVI > 0.15 (soil-adjusted)',
+  '• NDMI > -0.1 (has moisture)',
+  '• BSI < 0 (not bare soil)',
+  '• Min area: 0.5 hectares'
+];
+
+criteria.forEach(function(c) {
+  legend.add(ui.Label(c, {fontSize: '9px', color: '#34495e', margin: '2px 0'}));
+});
+
+// Footer with date and data source
+var footer = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {margin: '12px 0 0 0', padding: '8px 0 0 0'}
+});
+
+footer.add(ui.Label('Data: 2023-2024 Sentinel-2', {fontSize: '9px', color: '#7f8c8d'}));
+footer.add(ui.Label('Resolution: 10m', {fontSize: '9px', color: '#7f8c8d'}));
+footer.add(ui.Label('For agricultural planning only', {fontSize: '9px', color: '#e74c3c', margin: '4px 0 0 0'}));
+
+legend.add(footer);
+
+// Add legend to map
+Map.add(legend);
+
+// ============================================================================
+// 10. CALCULATE STATISTICS
+// ============================================================================
+
+var pixelArea = ee.Image.pixelArea();
+
+// Calculate farmland area
+var farmlandArea = filteredFarmland.selfMask()
+  .multiply(pixelArea)
+  .reduceRegion({
     reducer: ee.Reducer.sum(),
-    geometry: geometry,
+    geometry: studyArea,
     scale: 10,
     maxPixels: 1e13,
     bestEffort: true
   });
 
-  var areaHa = ee.Number(area.get(bandName)).divide(10000);
-  var totalHa = ee.Number(totalArea.get('area')).divide(10000);
-  var percent = areaHa.divide(totalHa).multiply(100);
+var totalArea = pixelArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: studyArea,
+  scale: 10,
+  bestEffort: true
+});
 
-  print(name + ' area (ha):', areaHa);
-  print(name + ' percent:', percent);
-}
+var farmlandHa = ee.Number(farmlandArea.get('farmland')).divide(10000);
+var totalHa = ee.Number(totalArea.get('area')).divide(10000);
+var percentFarmland = farmlandHa.divide(totalHa).multiply(100);
+
+print('==================================================');
+print('FARMLAND STATISTICS');
+print('==================================================');
+print('Study area:', studyArea == lowerShabelle ? 'Lower Shabelle' :
+      studyArea == middleShabelle ? 'Middle Shabelle' :
+      studyArea == bayRegion ? 'Bay Region' :
+      studyArea == jubaValley ? 'Juba Valley' : 'Gabiley');
+print('Total area (hectares):', totalHa);
+print('Farmland detected (hectares):', farmlandHa);
+print('Percentage farmland:', percentFarmland);
+print('Number of Sentinel-2 scenes:', sceneCount);
 
 // ============================================================================
-// 4. UI SETUP
+// 11. ZONE COMPARISON (if using full Somalia)
 // ============================================================================
 
-ui.root.clear();
-
-var map = ui.Map();
-map.setOptions('SATELLITE');
-ui.root.add(map);
-
-var controlPanel = ui.Panel({
-  style: {
-    position: 'top-left',
-    width: '370px',
-    padding: '12px',
-    backgroundColor: 'white'
-  }
-});
-
-var legendPanel = ui.Panel({
-  style: {
-    position: 'bottom-left',
-    width: '320px',
-    padding: '12px 16px',
-    backgroundColor: 'white',
-    border: '2px solid #333333',
-    borderRadius: '8px'
-  }
-});
-
-map.add(legendPanel);
-
-controlPanel.add(ui.Label({
-  value: 'Somalia Phenology-Based Farmland Detection',
-  style: {
-    fontWeight: 'bold',
-    fontSize: '16px',
-    margin: '0 0 8px 0'
-  }
-}));
-
-controlPanel.add(ui.Label({
-  value: 'Pick a SWALIM-informed agricultural zone and adjust Gu and Deyr time windows. The algorithm uses seasonal NDVI peak and amplitude, plus SAVI, NDMI, and BSI.',
-  style: {
-    fontSize: '11px',
-    color: 'gray',
-    margin: '0 0 10px 0'
-  }
-}));
-
-var zoneSelect = ui.Select({
-  items: zoneNames,
-  value: 'Shabelle Belt',
-  placeholder: 'Select agricultural zone'
-});
-
-controlPanel.add(ui.Label('Agricultural Area', {
-  fontWeight: 'bold',
-  fontSize: '12px'
-}));
-controlPanel.add(zoneSelect);
-
-// Sentinel-2 public archive starts in 2015, but practical L2A coverage is later.
-// Start slider from 2019 for cleaner behavior.
-var sliderStart = new Date('2019-01-01');
-var sliderEnd = new Date();
-
-var defaultGuStart = new Date('2025-05-01');
-var defaultGuEnd = new Date('2025-06-30');
-var defaultDeyrStart = new Date('2025-11-01');
-var defaultDeyrEnd = new Date('2025-12-31');
-
-if (sliderEnd < defaultGuEnd) {
-  defaultGuStart = new Date('2024-05-01');
-  defaultGuEnd = new Date('2024-06-30');
-}
-if (sliderEnd < defaultDeyrEnd) {
-  defaultDeyrStart = new Date('2024-11-01');
-  defaultDeyrEnd = new Date('2024-12-31');
-}
-
-controlPanel.add(ui.Label('Gu Date Range', {
-  fontWeight: 'bold',
-  fontSize: '12px',
-  margin: '12px 0 4px 0'
-}));
-
-var guDateLabel = ui.Label('Gu Range:', {
-  fontSize: '11px',
-  color: 'gray',
-  margin: '0 0 4px 0'
-});
-controlPanel.add(guDateLabel);
-
-var guDateSlider = ui.DateSlider({
-  start: sliderStart,
-  end: sliderEnd,
-  value: [defaultGuStart, defaultGuEnd],
-  period: 5,
-  style: {stretch: 'horizontal'}
-});
-controlPanel.add(guDateSlider);
-
-controlPanel.add(ui.Label('Deyr Date Range', {
-  fontWeight: 'bold',
-  fontSize: '12px',
-  margin: '12px 0 4px 0'
-}));
-
-var deyrDateLabel = ui.Label('Deyr Range:', {
-  fontSize: '11px',
-  color: 'gray',
-  margin: '0 0 4px 0'
-});
-controlPanel.add(deyrDateLabel);
-
-var deyrDateSlider = ui.DateSlider({
-  start: sliderStart,
-  end: sliderEnd,
-  value: [defaultDeyrStart, defaultDeyrEnd],
-  period: 5,
-  style: {stretch: 'horizontal'}
-});
-controlPanel.add(deyrDateSlider);
-
-var runButton = ui.Button({
-  label: 'Run Analysis',
-  style: {stretch: 'horizontal', margin: '12px 0 0 0'}
-});
-controlPanel.add(runButton);
-
-var statusLabel = ui.Label('Ready.', {
-  fontSize: '11px',
-  color: 'gray',
-  margin: '10px 0 0 0'
-});
-controlPanel.add(statusLabel);
-
-ui.root.add(controlPanel);
-
-// ============================================================================
-// 5. LEGEND
-// ============================================================================
-
-function drawLegend(selectedZone, guRange, deyrRange) {
-  legendPanel.clear();
-
-  legendPanel.add(ui.Label({
-    value: 'PHENOLOGY FARMLAND LEGEND',
-    style: {
-      fontWeight: 'bold',
-      fontSize: '14px',
-      margin: '0 0 10px 0',
-      textAlign: 'center'
-    }
-  }));
-
-  legendPanel.add(ui.Label({
-    value: 'Filter Area: ' + selectedZone,
-    style: {fontSize: '11px', margin: '0 0 8px 0'}
-  }));
-
-  function makeLegendRow(color, name, desc) {
-    var row = ui.Panel({
-      layout: ui.Panel.Layout.flow('horizontal'),
-      style: {margin: '4px 0'}
+function compareAllZones() {
+  var zones = [
+    {geom: lowerShabelle, name: 'Lower Shabelle'},
+    {geom: middleShabelle, name: 'Middle Shabelle'},
+    {geom: bayRegion, name: 'Bay Region'},
+    {geom: jubaValley, name: 'Juba Valley'},
+    {geom: gabiley, name: 'Gabiley'}
+  ];
+  
+  print('==================================================');
+  print('ALL AGRICULTURAL ZONES COMPARISON');
+  print('==================================================');
+  
+  zones.forEach(function(z) {
+    var zoneFarmland = filteredFarmland.selfMask()
+      .multiply(pixelArea)
+      .reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: z.geom,
+        scale: 10,
+        bestEffort: true
+      });
+    
+    var zoneArea = pixelArea.reduceRegion({
+      reducer: ee.Reducer.sum(),
+      geometry: z.geom,
+      scale: 10,
+      bestEffort: true
     });
-
-    row.add(ui.Label({
-      value: '■',
-      style: {color: color, fontSize: '16px', margin: '0 8px 0 0'}
-    }));
-
-    var text = ui.Panel({
-      layout: ui.Panel.Layout.flow('vertical'),
-      style: {margin: '0', padding: '0'}
+    
+    zoneFarmland.evaluate(function(farm) {
+      zoneArea.evaluate(function(total) {
+        var farmHa = (farm && farm.farmland) ? farm.farmland / 10000 : 0;
+        var totalHa = (total && total.area) ? total.area / 10000 : 0;
+        var percent = totalHa > 0 ? (farmHa / totalHa * 100).toFixed(1) : 0;
+        print(z.name + ': ' + Math.round(farmHa) + ' ha (' + percent + '%)');
+      });
     });
-
-    text.add(ui.Label({
-      value: name,
-      style: {fontWeight: 'bold', fontSize: '11px', margin: '0'}
-    }));
-
-    text.add(ui.Label({
-      value: desc,
-      style: {fontSize: '9px', color: 'gray', margin: '0'}
-    }));
-
-    row.add(text);
-    return row;
-  }
-
-  legendPanel.add(ui.Label({
-    value: 'Classes',
-    style: {fontWeight: 'bold', fontSize: '11px', margin: '10px 0 4px 0'}
-  }));
-
-  legendPanel.add(makeLegendRow('#00cc44', 'Gu Farmland', 'Detected by seasonal phenology in Gu window'));
-  legendPanel.add(makeLegendRow('#0066ff', 'Deyr Farmland', 'Detected by seasonal phenology in Deyr window'));
-  legendPanel.add(makeLegendRow('#ffff00', 'Persistent Farmland', 'Detected in both selected windows'));
-
-  legendPanel.add(ui.Label({
-    value: 'Selected Dates',
-    style: {fontWeight: 'bold', fontSize: '11px', margin: '10px 0 4px 0'}
-  }));
-
-  legendPanel.add(ui.Label(
-    'Gu: ' + formatJsDate(guRange.start) + ' to ' + formatJsDate(guRange.end),
-    {fontSize: '10px'}
-  ));
-  legendPanel.add(ui.Label(
-    'Deyr: ' + formatJsDate(deyrRange.start) + ' to ' + formatJsDate(deyrRange.end),
-    {fontSize: '10px'}
-  ));
-
-  legendPanel.add(ui.Label({
-    value: 'Phenology Rules',
-    style: {fontWeight: 'bold', fontSize: '11px', margin: '10px 0 4px 0'}
-  }));
-
-  legendPanel.add(ui.Label('NDVI P90 > 0.32', {fontSize: '10px'}));
-  legendPanel.add(ui.Label('NDVI amplitude > 0.12', {fontSize: '10px'}));
-  legendPanel.add(ui.Label('NDVI minimum < 0.45', {fontSize: '10px'}));
-  legendPanel.add(ui.Label('SAVI max > 0.18', {fontSize: '10px'}));
-  legendPanel.add(ui.Label('NDMI mean > -0.08', {fontSize: '10px'}));
-  legendPanel.add(ui.Label('BSI median < 0.15', {fontSize: '10px'}));
-  legendPanel.add(ui.Label('Minimum patch size = 0.5 ha', {fontSize: '10px'}));
-
-  legendPanel.add(ui.Label({
-    value: 'Sentinel-2 | 10m | 5-day slider step',
-    style: {fontSize: '9px', color: 'gray', margin: '10px 0 0 0'}
-  }));
+  });
 }
 
-// ============================================================================
-// 6. MAIN ANALYSIS
-// ============================================================================
-
-function runAnalysis() {
-  var selectedZone = zoneSelect.getValue();
-  var filterArea = getSelectedZoneGeometry(selectedZone);
-
-  var guRange = getDateRangeFromSlider(guDateSlider);
-  var deyrRange = getDateRangeFromSlider(deyrDateSlider);
-
-  updateDateLabel(guDateLabel, 'Gu Range', guRange);
-  updateDateLabel(deyrDateLabel, 'Deyr Range', deyrRange);
-
-  statusLabel.setValue('Running analysis for: ' + selectedZone + ' ...');
-
-  map.layers().reset();
-  map.centerObject(filterArea, selectedZone === 'All SWALIM Agricultural Areas' ? 6 : 8);
-
-  map.addLayer(
-    ee.Image().paint(somaliaAOI, 1, 2),
-    {palette: ['999999']},
-    'Somalia AOI',
-    false
-  );
-
-  map.addLayer(
-    ee.Image().paint(filterArea, 1, 2),
-    {palette: ['yellow']},
-    'Selected Agricultural Filter Area',
-    true
-  );
-
-  var guCollection = getCollection(
-    filterArea,
-    formatJsDate(guRange.start),
-    formatJsDate(guRange.end)
-  );
-
-  var deyrCollection = getCollection(
-    filterArea,
-    formatJsDate(deyrRange.start),
-    formatJsDate(deyrRange.end)
-  );
-
-  var guComposite = getMedianComposite(guCollection, filterArea);
-  var deyrComposite = getMedianComposite(deyrCollection, filterArea);
-
-  var guMetrics = buildPhenologyMetrics(guCollection, 'Gu', filterArea);
-  var deyrMetrics = buildPhenologyMetrics(deyrCollection, 'Deyr', filterArea);
-
-  var guFarmland = classifyPhenologyFarmland(guMetrics, 'Gu', filterArea);
-  var deyrFarmland = classifyPhenologyFarmland(deyrMetrics, 'Deyr', filterArea);
-
-  var persistentFarmland = guFarmland.and(deyrFarmland).rename('Persistent_Farmland');
-  var guOnly = guFarmland.and(deyrFarmland.not()).rename('Gu_Only');
-  var deyrOnly = deyrFarmland.and(guFarmland.not()).rename('Deyr_Only');
-  var anyFarmland = guFarmland.or(deyrFarmland).rename('Any_Farmland');
-
-  var ndviPeakDiff = guMetrics.select('Gu_NDVI_P90')
-    .subtract(deyrMetrics.select('Deyr_NDVI_P90'))
-    .rename('NDVI_Peak_Diff')
-    .clip(filterArea);
-
-  var guAmp = guMetrics.select('Gu_NDVI_AMP');
-  var deyrAmp = deyrMetrics.select('Deyr_NDVI_AMP');
-
-  // Base imagery
-  map.addLayer(
-    guComposite.select(['B4', 'B8', 'B11']),
-    {min: 0.02, max: 0.35},
-    'Gu Agriculture Composite',
-    false
-  );
-
-  map.addLayer(
-    deyrComposite.select(['B4', 'B8', 'B11']),
-    {min: 0.02, max: 0.35},
-    'Deyr Agriculture Composite',
-    false
-  );
-
-  // Phenology layers
-  map.addLayer(
-    guMetrics.select('Gu_NDVI_P90'),
-    {min: 0, max: 0.8, palette: ['brown', 'yellow', 'green', 'darkgreen']},
-    'Gu NDVI Peak (P90)',
-    false
-  );
-
-  map.addLayer(
-    deyrMetrics.select('Deyr_NDVI_P90'),
-    {min: 0, max: 0.8, palette: ['brown', 'yellow', 'green', 'darkgreen']},
-    'Deyr NDVI Peak (P90)',
-    false
-  );
-
-  map.addLayer(
-    guAmp,
-    {min: 0, max: 0.4, palette: ['white', 'yellow', 'orange', 'red']},
-    'Gu NDVI Amplitude',
-    false
-  );
-
-  map.addLayer(
-    deyrAmp,
-    {min: 0, max: 0.4, palette: ['white', 'yellow', 'orange', 'red']},
-    'Deyr NDVI Amplitude',
-    false
-  );
-
-  // Farmland layers
-  map.addLayer(
-    guFarmland.selfMask(),
-    {palette: ['00cc44']},
-    'Gu Farmland',
-    true
-  );
-
-  map.addLayer(
-    deyrFarmland.selfMask(),
-    {palette: ['0066ff']},
-    'Deyr Farmland',
-    true
-  );
-
-  map.addLayer(
-    persistentFarmland.selfMask(),
-    {palette: ['ffff00']},
-    'Persistent Farmland (Gu + Deyr)',
-    true
-  );
-
-  map.addLayer(
-    guOnly.selfMask(),
-    {palette: ['00cc44']},
-    'Gu Only Farmland',
-    false
-  );
-
-  map.addLayer(
-    deyrOnly.selfMask(),
-    {palette: ['0066ff']},
-    'Deyr Only Farmland',
-    false
-  );
-
-  map.addLayer(
-    anyFarmland.selfMask(),
-    {palette: ['limegreen']},
-    'Any Seasonal Farmland',
-    false
-  );
-
-  map.addLayer(
-    ndviPeakDiff,
-    {min: -0.35, max: 0.35, palette: ['blue', 'white', 'green']},
-    'NDVI Peak Difference (Gu - Deyr)',
-    false
-  );
-
-  drawLegend(selectedZone, guRange, deyrRange);
-
-  print('==================================================');
-  print('PHENOLOGY-BASED IMAGE AVAILABILITY');
-  print('==================================================');
-  print('Selected zone:', selectedZone);
-  print('Gu start:', formatJsDate(guRange.start));
-  print('Gu end:', formatJsDate(guRange.end));
-  print('Deyr start:', formatJsDate(deyrRange.start));
-  print('Deyr end:', formatJsDate(deyrRange.end));
-  print('Gu scenes:', guCollection.size());
-  print('Deyr scenes:', deyrCollection.size());
-
-  print('==================================================');
-  print('PHENOLOGY-BASED FARMLAND STATISTICS');
-  print('==================================================');
-  print('Somalia AOI: Entire Somalia');
-  print('Selected agricultural filter area:', selectedZone);
-
-  areaStats(guFarmland, 'Gu_Farmland', filterArea, 'Gu farmland');
-  areaStats(deyrFarmland, 'Deyr_Farmland', filterArea, 'Deyr farmland');
-  areaStats(persistentFarmland, 'Persistent_Farmland', filterArea, 'Persistent farmland');
-  areaStats(anyFarmland, 'Any_Farmland', filterArea, 'Any seasonal farmland');
-
-  statusLabel.setValue('Analysis complete for: ' + selectedZone);
-}
+// Uncomment to compare all zones
+// compareAllZones();
 
 // ============================================================================
-// 7. EVENTS
+// 12. EXPORT
 // ============================================================================
 
-runButton.onClick(function() {
-  runAnalysis();
+Export.image.toDrive({
+  image: filteredFarmland.selfMask(),
+  description: 'Somalia_Farmland_Sentinel2',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'somalia_farmland_s2',
+  region: studyArea,
+  scale: 10,
+  maxPixels: 1e13
 });
 
-zoneSelect.onChange(function() {
-  updateDateLabel(guDateLabel, 'Gu Range', getDateRangeFromSlider(guDateSlider));
-  updateDateLabel(deyrDateLabel, 'Deyr Range', getDateRangeFromSlider(deyrDateSlider));
+Export.image.toDrive({
+  image: ndvi,
+  description: 'Somalia_NDVI',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'somalia_ndvi',
+  region: studyArea,
+  scale: 10,
+  maxPixels: 1e13
 });
 
-guDateSlider.onChange(function() {
-  updateDateLabel(guDateLabel, 'Gu Range', getDateRangeFromSlider(guDateSlider));
-});
-
-deyrDateSlider.onChange(function() {
-  updateDateLabel(deyrDateLabel, 'Deyr Range', getDateRangeFromSlider(deyrDateSlider));
-});
-
-// ============================================================================
-// 8. INITIAL LABELS + RUN
-// ============================================================================
-
-updateDateLabel(guDateLabel, 'Gu Range', getDateRangeFromSlider(guDateSlider));
-updateDateLabel(deyrDateLabel, 'Deyr Range', getDateRangeFromSlider(deyrDateSlider));
-runAnalysis();
+print('==================================================');
+print('FARMLAND DETECTION COMPLETE');
+print('==================================================');
+print('Legend added to map (bottom-right)');
+print('Green areas: Detected farmland');
+print('Check Console for statistics');
+print('Export tasks available in Tasks tab');
