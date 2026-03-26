@@ -111,19 +111,24 @@ function getSelectedZoneGeometry(zoneName) {
   return lowerShabelleRiverine;
 }
 
-function formatJsDate(d) {
-  var yyyy = d.getFullYear();
-  var mm = String(d.getMonth() + 1).padStart(2, '0');
-  var dd = String(d.getDate()).padStart(2, '0');
-  return yyyy + '-' + mm + '-' + dd;
-}
-
 function getDateRangeFromSlider(slider) {
   var range = slider.getValue();
   return {
     start: range[0],
     end: range[1]
   };
+}
+
+function toJsDate(d) {
+  return new Date(d);
+}
+
+function formatJsDate(d) {
+  var date = toJsDate(d);
+  var yyyy = date.getFullYear();
+  var mm = String(date.getMonth() + 1).padStart(2, '0');
+  var dd = String(date.getDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd;
 }
 
 function updateDateLabel(labelWidget, prefix, rangeObj) {
@@ -600,16 +605,16 @@ function runAnalysis() {
   );
 
   var guCollection = getCollection(
-    filterArea,
-    formatJsDate(guRange.start),
-    formatJsDate(guRange.end)
-  );
+  filterArea,
+  formatJsDate(guRange.start),
+  formatJsDate(guRange.end)
+);
 
-  var deyrCollection = getCollection(
-    filterArea,
-    formatJsDate(deyrRange.start),
-    formatJsDate(deyrRange.end)
-  );
+var deyrCollection = getCollection(
+  filterArea,
+  formatJsDate(deyrRange.start),
+  formatJsDate(deyrRange.end)
+);
 
   var guComposite = getMedianComposite(guCollection, filterArea);
   var deyrComposite = getMedianComposite(deyrCollection, filterArea);
