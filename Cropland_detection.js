@@ -119,16 +119,19 @@ function getDateRangeFromSlider(slider) {
   };
 }
 
-function toJsDate(d) {
-  return new Date(d);
+function formatDateForDisplay(d) {
+  return ee.Date(d).format('YYYY-MM-dd');
 }
 
-function formatJsDate(d) {
-  var date = toJsDate(d);
-  var yyyy = date.getFullYear();
-  var mm = String(date.getMonth() + 1).padStart(2, '0');
-  var dd = String(date.getDate()).padStart(2, '0');
-  return yyyy + '-' + mm + '-' + dd;
+function updateDateLabel(labelWidget, prefix, rangeObj) {
+  var start = formatDateForDisplay(rangeObj.start);
+  var end = formatDateForDisplay(rangeObj.end);
+
+  start.evaluate(function(s) {
+    end.evaluate(function(e) {
+      labelWidget.setValue(prefix + ': ' + s + ' to ' + e);
+    });
+  });
 }
 
 function updateDateLabel(labelWidget, prefix, rangeObj) {
